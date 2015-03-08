@@ -1,0 +1,305 @@
+/*
+ * test-multiseg.c -- test the protocol for talking to the LTM-Y2K19JF-03
+ *                    multi-segment display.
+ *
+ * Copyright 2015 Jeff Licquia.
+ *
+ * This routine tests writing to a generic multi-segment display which can
+ * be found occasionally in old parts bins.  Thanks to Marty Beem for
+ * providing me one to play with.
+ *
+ * The part was reverse-engineered by David Cook.  Write-up here:
+ *
+ * http://www.robotroom.com/MultiSegmentLEDDisplay.html
+ *
+ * The basic idea is that the header on the back of this part takes
+ * 5V signals like so:
+ *
+ *       data  X     X  +5VDC
+ *      reset  X  X  X  ground
+ *              clock
+ *
+ * Data is written in 36-byte blocks, with the first bit being a start
+ * bit (always 1) and a stop bit (which is ignored).  Use 0 for this
+ * bit and all non-specified bits; this allows for resync if the two
+ * ends get out of sync.
+ *
+ * Writing a bit involves setting the data line low or high for 0 or
+ * 1, respectively, waiting at least 300 nanoseconds, setting the
+ * clock high, waiting at least 950 nanoseconds, and setting the clock
+ * low.  Slower timings are perfectly fine.
+ *
+ * The bits are accumulated until all 36 have been written, at which
+ * point the specified segments on the display light, and all
+ * unspecified segments turn off.
+ *
+ * Note that there are 138 segments to light and only 34 usable bits.
+ * This means that we have to cycle between 5 groups of segments.  The
+ * last 5 bits before the stop bit indicate the group.  We therefore
+ * have to continuously update the display, cycling through all 5
+ * groups rapidly, in order for the entire display to be useful.
+ * 
+ * Here are the 5 groups, taken from the above page:
+ *
+ * 1) 1 start + 14 alpha + 1 ignore + 2 colon + 8 icon + 2 colon + 2
+ *    ignore + 5 transistor + 1 zero = 36
+ * 2) 1 start + 14 alpha + 7 numeric + 7 numeric + 1 ignore + 5
+ *    transistor + 1 zero = 36
+ * 3) 1 start + 14 alpha + 7 numeric + 7 numeric + 1 ignore + 5
+ *    transistor + 1 zero = 36
+ * 4) 1 start + 14 alpha + 14 alpha + 1 ignore + 5 transistor + 1 zero
+ *    = 36
+ * 5) 1 start + 14 alpha + 14 alpha + 1 ignore + 5 transistor + 1 zero
+ *    = 36
+ *
+ * Writing an entire group of 5 requires delays totalling about
+ * 225,000 nanoseconds, which means the whole update process should
+ * take about a quarter of a millisecond.  This should give us plenty
+ * of time for extra resync zero bits, and also not tax the processor
+ * too heavily.
+ *
+ * This routine is written assuming the pins are connected to a
+ * Raspberry Pi Model B, with the data pin hooked to GPIO 22, the
+ * clock pin hooked to GPIO 17, and the reset pin hooked to GPIO 21/27
+ * (depending on the version of the board).  I'm using a level shifter
+ * from Adafruit to translate the 3.3V signals from the Pi to the 5V
+ * signals the display expects (http://www.adafruit.com/products/757).
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <time.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <errno.h>
+
+/* Simple error handling. */
+
+void check_error(const int retval, const char *errmsg)
+{
+  if (retval != 0) {
+    fputs(errmsg, stderr);
+    fputc('\n', stderr);
+    exit(-1);
+  }
+}
+
+/*
+ * Routines for controlling GPIO via sysfs.
+ * Adapted from example code by Guillermo A. Amaral B. <g@maral.me>,
+ * found at http://elinux.org/RPi_Low-level_peripherals.
+ */
+
+#define SYSFS_GPIO_DIR_INPUT 0
+#define SYSFS_GPIO_DIR_OUTPUT 1
+#define SYSFS_GPIO_PIN_LOW 0
+#define SYSFS_GPIO_PIN_HIGH 1
+
+int sysfs_gpio_export_pin(int pin)
+{
+  char buffer[3];
+  ssize_t bytes;
+  int fd;
+
+  fd = open("/sys/class/gpio/export", O_WRONLY);
+  if (fd == -1) {
+    fputs("Failed to open export for writing!\n", stderr);
+    return -1;
+  }
+ 
+  bytes = snprintf(buffer, 3, "%d", pin);
+  write(fd, buffer, bytes);
+  close(fd);
+  return 0;
+}
+
+int sysfs_gpio_unexport_pin(int pin)
+{
+  char buffer[3];
+  ssize_t bytes;
+  int fd;
+ 
+  fd = open("/sys/class/gpio/unexport", O_WRONLY);
+  if (fd == -1) {
+    fputs("Failed to open unexport for writing!\n", stderr);
+    return -1;
+  }
+ 
+  bytes = snprintf(buffer, 3, "%d", pin);
+  write(fd, buffer, bytes);
+  close(fd);
+  return 0;
+}
+
+int sysfs_gpio_set_direction(int pin, int direction)
+{
+  char *direction_str;
+  int direction_length;
+  char path[35];
+  int fd;
+ 
+  snprintf(path, 35, "/sys/class/gpio/gpio%d/direction", pin);
+  fd = open(path, O_WRONLY);
+  if (fd == -1) {
+    fputs("Failed to open gpio direction for writing!\n", stderr);
+    return -1;
+  }
+
+  if (direction == SYSFS_GPIO_DIR_INPUT) {
+    direction_str = "in";
+    direction_length = 2;
+  } else if (direction == SYSFS_GPIO_DIR_OUTPUT) {
+    direction_str = "out";
+    direction_length = 3;
+  } else {
+    fputs("error: invalid direction\n", stderr);
+    return -1;
+  }
+ 
+  if (write(fd, direction_str, direction_length) == -1) {
+    fputs("Failed to set direction!\n", stderr);
+    return -1;
+  }
+ 
+  close(fd);
+  return 0;
+}
+
+int sysfs_gpio_write_pin(int pin, int setting)
+{
+  static const char s_values_str[] = "01";
+ 
+  char path[30];
+  int fd;
+  int values_index;
+ 
+  snprintf(path, 30, "/sys/class/gpio/gpio%d/value", pin);
+  fd = open(path, O_WRONLY);
+  if (fd == -1) {
+    fputs("Failed to open gpio value for writing!\n", stderr);
+    return -1;
+  }
+
+  if (setting == SYSFS_GPIO_PIN_LOW) {
+    values_index = 0;
+  } else if (setting == SYSFS_GPIO_PIN_HIGH) {
+    values_index = 1;
+  } else {
+    fputs("error: invalid pin setting value\n", stderr);
+    return -1;
+  }
+ 
+  if (write(fd, &s_values_str[values_index], 1) != 1) {
+    fprintf(stderr, "Failed to write value!\n");
+    return -1;
+  }
+ 
+  close(fd);
+  return 0;
+}
+
+#define GPIO_SEG_DATA 22
+#define GPIO_SEG_CLOCK 17
+
+#ifdef CONFIG_RASPI_REV_A
+#define GPIO_SEG_RESET 21
+#else
+#define GPIO_SEG_RESET 27
+#endif
+
+/* Sleep for a specified number of nanoseconds. */
+
+void local_sleep(long nsec)
+{
+  struct timespec to_wait;
+  struct timespec remaining;
+  int sleep_retval;
+
+  to_wait.tv_sec = 0;
+  remaining.tv_sec = 0;
+  to_wait.tv_nsec = 300;
+  remaining.tv_nsec = 0;
+  sleep_retval = -1;
+  while ((sleep_retval == -1) && (errno == EINTR)) {
+    sleep_retval = nanosleep(&to_wait, &remaining);
+    to_wait.tv_nsec = remaining.tv_nsec;
+  }
+}
+
+/* Blast a single bit to the display controller.  The "bit" parameter is
+   0 or 1.  It can be more than 1; we mask off all but the first bit
+   for the sake of convenience. */
+
+void blast_bit(const uint8_t bit)
+{
+  int bit_setting =
+    ((bit & 0x01) == 0) ? SYSFS_GPIO_PIN_LOW : SYSFS_GPIO_PIN_HIGH;
+
+  /* Failsafe: make sure the clock pin starts low every time. */
+
+  check_error(sysfs_gpio_write_pin(GPIO_SEG_CLOCK, SYSFS_GPIO_PIN_LOW),
+              "error setting clock pin low");
+
+  check_error(sysfs_gpio_write_pin(GPIO_SEG_DATA, bit_setting),
+              "error setting data pin");
+  local_sleep(300);
+  check_error(sysfs_gpio_write_pin(GPIO_SEG_CLOCK, SYSFS_GPIO_PIN_HIGH),
+              "error setting clock pin high");
+  local_sleep(950);
+  check_error(sysfs_gpio_write_pin(GPIO_SEG_CLOCK, SYSFS_GPIO_PIN_LOW),
+              "error setting clock pin low");
+}
+
+/* Write an entire 34-byte block to the display controller. */
+
+void blast_block(const uint8_t block[5])
+{
+  uint8_t local_block[5];
+  int i, j;
+
+  /* Mask off bits passed beyond 34.  This way, we can write the
+     entire 40-byte block with the last 6 bits acting as stop bits for
+     syncing purposes. */
+
+  for (i = 0; i < 5; i++) {
+    local_block[i] = block[i];
+  }
+  local_block[4] = local_block[4] & 0xc0;
+
+  /* Start bit. */
+
+  blast_bit(1);
+
+  /* Now go through the entire block bit by bit. */
+
+  for (i = 0; i < 5; i++) {
+    for (j = 7; j >= 0; j--) {
+      blast_bit(local_block[i] >> j);
+    }
+  }
+}
+
+int main(int argc, char *argv)
+{
+  /* This block should turn on all the segments of the first
+     character. */
+
+  static const uint8_t block[5] = { 0xFF, 0xFC, 0x00, 0x04, 0x00 };
+
+  /* Initialize the GPIO system. */
+
+  sysfs_gpio_export_pin(GPIO_SEG_DATA);
+  sysfs_gpio_set_direction(GPIO_SEG_DATA, SYSFS_GPIO_DIR_OUTPUT);
+  sysfs_gpio_export_pin(GPIO_SEG_CLOCK);
+  sysfs_gpio_set_direction(GPIO_SEG_CLOCK, SYSFS_GPIO_DIR_OUTPUT);
+  sysfs_gpio_export_pin(GPIO_SEG_RESET);
+  sysfs_gpio_set_direction(GPIO_SEG_RESET, SYSFS_GPIO_DIR_OUTPUT);
+
+  /* Try to turn on all characters of the first display. */
+
+  blast_block(block);
+
+  return 0;
+}
