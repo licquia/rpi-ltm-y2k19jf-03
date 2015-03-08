@@ -18,6 +18,11 @@
  * found at http://elinux.org/RPi_Low-level_peripherals.
  */
 
+int gpio_init()
+{
+  return 0;
+}
+
 int gpio_export_pin(int pin)
 {
   char buffer[3];

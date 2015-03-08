@@ -10,6 +10,7 @@
 #define GPIO_PIN_LOW 0
 #define GPIO_PIN_HIGH 1
 
+int gpio_init();
 int gpio_export_pin(int pin);
 int gpio_unexport_pin(int pin);
 int gpio_set_direction(int pin, int direction);

@@ -237,6 +237,8 @@ int main(int argc, char *argv)
 
   /* Initialize the GPIO system. */
 
+  check_error(gpio_init(), "couldn't initialize GPIO");
+
   gpio_export_pin(GPIO_SEG_DATA);
   gpio_set_direction(GPIO_SEG_DATA, GPIO_DIR_OUTPUT);
   gpio_export_pin(GPIO_SEG_CLOCK);
