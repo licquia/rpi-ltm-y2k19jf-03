@@ -74,6 +74,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <unistd.h>
 
 /* Simple error handling. */
 
@@ -283,10 +284,9 @@ void blast_block(const uint8_t block[5])
 
 int main(int argc, char *argv)
 {
-  /* This block should turn on all the segments of the first
-     character. */
-
-  static const uint8_t block[5] = { 0xFF, 0xFC, 0x00, 0x04, 0x00 };
+  uint8_t block[5] = { 0x00, 0x00, 0x00, 0x00, 0x00 };
+  uint8_t selector_mask, segment_mask;
+  int selector_mask_index, segment_mask_index, i, j;
 
   /* Initialize the GPIO system. */
 
@@ -297,9 +297,35 @@ int main(int argc, char *argv)
   sysfs_gpio_export_pin(GPIO_SEG_RESET);
   sysfs_gpio_set_direction(GPIO_SEG_RESET, SYSFS_GPIO_DIR_OUTPUT);
 
-  /* Try to turn on all characters of the first display. */
+  /* Light each segment in the first block, one at a time. */
 
-  blast_block(block);
+  for (i = 0; i < 5; i++) {
+    for (j = 0; j < 29; j++) {
+      segment_mask_index = j / 8;
+      segment_mask = 0x80 >> (j % 8);
+
+      if (i < 3) {
+        selector_mask = 0x04 >> i;
+        selector_mask_index = 3;
+      } else {
+        selector_mask = 0x80 >> (i - 3);
+        selector_mask_index = 4;
+      }
+
+      block[segment_mask_index] = block[segment_mask_index] | segment_mask;
+      block[selector_mask_index] = block[selector_mask_index] | selector_mask;
+
+      printf("%02X-%02X-%02X-%02X-%02X\n", block[0], block[1], block[2],
+             block[3], block[4]);
+
+      blast_block(block);
+
+      block[segment_mask_index] = block[segment_mask_index] & (~segment_mask);
+      block[selector_mask_index] = block[selector_mask_index] & (~selector_mask);
+
+      sleep(3);
+    }
+  }
 
   return 0;
 }
