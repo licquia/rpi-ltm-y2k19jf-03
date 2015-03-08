@@ -20,9 +20,9 @@
  *              clock
  *
  * Data is written in 36-byte blocks, with the first bit being a start
- * bit (always 1) and a stop bit (which is ignored).  Use 0 for this
- * bit and all non-specified bits; this allows for resync if the two
- * ends get out of sync.
+ * bit (always 1) and the last being a stop bit (which is ignored).
+ * Use 0 for this bit and all non-specified bits; this allows for
+ * resync if the two ends get out of sync.
  *
  * Writing a bit involves setting the data line low or high for 0 or
  * 1, respectively, waiting at least 300 nanoseconds, setting the
@@ -414,11 +414,19 @@ int main(int argc, char *argv)
   pthread_cancel(blaster_thread);
   pthread_join(blaster_thread, NULL);
 
-  /* Reset the display and terminate. */
+  /* Reset the display. */
 
   sysfs_gpio_write_pin(GPIO_SEG_RESET, SYSFS_GPIO_PIN_HIGH);
   local_sleep(1000);
   sysfs_gpio_write_pin(GPIO_SEG_RESET, SYSFS_GPIO_PIN_LOW);
+
+  /* Unregister the GPIO pins and terminate.  Note that we probably
+     *should* unregister, but it seems to cause problems with
+     *subsequent runs. */
+
+  /* sysfs_gpio_unexport_pin(GPIO_SEG_DATA);
+  sysfs_gpio_unexport_pin(GPIO_SEG_CLOCK);
+  sysfs_gpio_unexport_pin(GPIO_SEG_RESET); */
 
   return 0;
 }
