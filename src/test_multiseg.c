@@ -145,6 +145,7 @@ void local_sleep(long usec)
     to_wait.tv_nsec = usec % 1000000;
     remaining.tv_nsec = 0;
     sleep_retval = -1;
+    errno = EINTR;
     while ((sleep_retval == -1) && (errno == EINTR)) {
       sleep_retval = nanosleep(&to_wait, &remaining);
       to_wait.tv_sec = remaining.tv_sec;
