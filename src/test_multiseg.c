@@ -75,6 +75,18 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <unistd.h>
+#include <pthread.h>
+
+/* Global state variables, for thread communication. */
+
+uint8_t semaphore = 2;
+
+uint8_t block[5][5] = 
+  { { 0x00, 0x00, 0x00, 0x04, 0x00 },
+    { 0x00, 0x00, 0x00, 0x02, 0x00 },
+    { 0x00, 0x00, 0x00, 0x01, 0x00 },
+    { 0x00, 0x00, 0x00, 0x00, 0x80 },
+    { 0x00, 0x00, 0x00, 0x00, 0x40 } };
 
 /* Simple error handling. */
 
@@ -282,11 +294,61 @@ void blast_block(const uint8_t block[5])
   }
 }
 
+/* Main loop for actual writer thread.  This does the block switching
+   thing, going through all five blocks so fast that they all appear
+   lit.  We use a very simple global semaphore to control updates. */
+
+void *blast_blocks_loop(void *arg)
+{
+  uint8_t local_block[5][5] = 
+    { { 0x00, 0x00, 0x00, 0x04, 0x00 },
+      { 0x00, 0x00, 0x00, 0x02, 0x00 },
+      { 0x00, 0x00, 0x00, 0x01, 0x00 },
+      { 0x00, 0x00, 0x00, 0x00, 0x80 },
+      { 0x00, 0x00, 0x00, 0x00, 0x40 } };
+  int current_block_counter = 0;
+  int i, j;
+
+  while (1) {
+    /* Write the current block info. */
+
+    blast_block(local_block[current_block_counter]);
+
+    /* Set up for the next block to write. */
+
+    current_block_counter++;
+    if (current_block_counter > 4) {
+      current_block_counter = 0;
+    }
+
+    /* Wait until the next opportunity to run. */
+
+    local_sleep(9000000);
+
+    /* Time to grab an update. */
+
+    if (semaphore == 0) {
+      semaphore++;
+
+      for (i = 0; i < 5; i++) {
+        for (j = 0; j < 5; j++) {
+          local_block[i][j] = block[i][j];
+        }
+      }
+
+      semaphore++;
+    }
+  }
+
+  /* Warning suppression; we should never get here. */
+  return NULL;
+}
+
 int main(int argc, char *argv)
 {
-  uint8_t block[5] = { 0x00, 0x00, 0x00, 0x00, 0x00 };
-  uint8_t selector_mask, segment_mask;
-  int selector_mask_index, segment_mask_index, i, j;
+  uint8_t segment_mask;
+  int segment_mask_index, i, j;
+  pthread_t blaster_thread;
 
   /* Initialize the GPIO system. */
 
@@ -297,35 +359,66 @@ int main(int argc, char *argv)
   sysfs_gpio_export_pin(GPIO_SEG_RESET);
   sysfs_gpio_set_direction(GPIO_SEG_RESET, SYSFS_GPIO_DIR_OUTPUT);
 
-  /* Light each segment in the first block, one at a time. */
+  /* Start the blaster loop. */
 
-  for (i = 0; i < 5; i++) {
-    for (j = 0; j < 29; j++) {
-      segment_mask_index = j / 8;
-      segment_mask = 0x80 >> (j % 8);
+  check_error(pthread_create(&blaster_thread, NULL, blast_blocks_loop, NULL),
+              "could not start thread");
 
-      if (i < 3) {
-        selector_mask = 0x04 >> i;
-        selector_mask_index = 3;
-      } else {
-        selector_mask = 0x80 >> (i - 3);
-        selector_mask_index = 4;
-      }
+  /* Set up the next segments to light.  For now, that's one segment
+     per group. */
 
-      block[segment_mask_index] = block[segment_mask_index] | segment_mask;
-      block[selector_mask_index] = block[selector_mask_index] | selector_mask;
+  for (j = 0; j < 29; j++) {
+    /* Wait for the semaphore to be ready. */
 
-      printf("%02X-%02X-%02X-%02X-%02X\n", block[0], block[1], block[2],
-             block[3], block[4]);
-
-      blast_block(block);
-
-      block[segment_mask_index] = block[segment_mask_index] & (~segment_mask);
-      block[selector_mask_index] = block[selector_mask_index] & (~selector_mask);
-
-      sleep(3);
+    while (semaphore == 1) {
+      local_sleep(1500);
     }
+
+    /* Update the block structure with the current writes. */
+
+    segment_mask_index = j / 8;
+    segment_mask = 0x80 >> (j % 8);
+
+    for (i = 0; i < 5; i++) {
+      block[i][segment_mask_index] = block[i][segment_mask_index] | segment_mask;
+    }
+
+    /* Print the first block's values for monitoring purposes. */
+
+    printf("%02X-%02X-%02X-%02X-%02X\n", block[0][0], block[0][1],
+           block[0][2], block[0][3], block[0][4]);
+
+    /* Signal the thread to update. */
+
+    semaphore = 0;
+
+    /* Wait for it to be read back. */
+
+    while (semaphore < 2) {
+      local_sleep(1500);
+    }
+
+    /* Undo the previous writes in preparation for the next set. */
+
+    for (i = 0; i < 5; i++) {
+      block[i][segment_mask_index] = block[i][segment_mask_index] & (~segment_mask);
+    }
+
+    /* Wait 3 seconds. */
+
+    sleep(3);
   }
+
+  /* Stop the update thread. */
+
+  pthread_cancel(blaster_thread);
+  pthread_join(blaster_thread, NULL);
+
+  /* Reset the display and terminate. */
+
+  sysfs_gpio_write_pin(GPIO_SEG_RESET, SYSFS_GPIO_PIN_HIGH);
+  local_sleep(1000);
+  sysfs_gpio_write_pin(GPIO_SEG_RESET, SYSFS_GPIO_PIN_LOW);
 
   return 0;
 }
