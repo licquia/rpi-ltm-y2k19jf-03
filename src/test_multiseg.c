@@ -73,6 +73,7 @@
 #include <errno.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <sys/time.h>
 
 #include "gpio.h"
 
@@ -107,22 +108,48 @@ void check_error(const int retval, const char *errmsg)
 #define GPIO_SEG_RESET 27
 #endif
 
-/* Sleep for a specified number of nanoseconds. */
+/* Sleep for a specified number of microseconds.  For delays less
+   than about 100 microseconds, just busy-wait; this seems to be best
+   practice on Linux.  For longer times, nanosleep should do the
+   trick.  See:
 
-void local_sleep(long nsec)
+   https://projects.drogon.net/accurate-delays-on-the-raspberry-pi/
+
+   Short loop busy-wait pulled from wiringPi.
+ */
+
+void delayMicrosecondsHard (unsigned int howLong)
+{
+  struct timeval tNow, tLong, tEnd ;
+
+  gettimeofday (&tNow, NULL) ;
+  tLong.tv_sec  = howLong / 1000000 ;
+  tLong.tv_usec = howLong % 1000000 ;
+  timeradd (&tNow, &tLong, &tEnd) ;
+
+  while (timercmp (&tNow, &tEnd, <))
+    gettimeofday (&tNow, NULL) ;
+}
+
+void local_sleep(long usec)
 {
   struct timespec to_wait;
   struct timespec remaining;
   int sleep_retval;
 
-  to_wait.tv_sec = 0;
-  remaining.tv_sec = 0;
-  to_wait.tv_nsec = 300;
-  remaining.tv_nsec = 0;
-  sleep_retval = -1;
-  while ((sleep_retval == -1) && (errno == EINTR)) {
-    sleep_retval = nanosleep(&to_wait, &remaining);
-    to_wait.tv_nsec = remaining.tv_nsec;
+  if (usec < 100) {
+    delayMicrosecondsHard(usec);
+  } else {
+    to_wait.tv_sec = usec / 1000000;
+    remaining.tv_sec = 0;
+    to_wait.tv_nsec = usec % 1000000;
+    remaining.tv_nsec = 0;
+    sleep_retval = -1;
+    while ((sleep_retval == -1) && (errno == EINTR)) {
+      sleep_retval = nanosleep(&to_wait, &remaining);
+      to_wait.tv_sec = remaining.tv_sec;
+      to_wait.tv_nsec = remaining.tv_nsec;
+    }
   }
 }
 
@@ -142,10 +169,10 @@ void blast_bit(const uint8_t bit)
 
   check_error(gpio_write_pin(GPIO_SEG_DATA, bit_setting),
               "error setting data pin");
-  local_sleep(300);
+  local_sleep(1);
   check_error(gpio_write_pin(GPIO_SEG_CLOCK, GPIO_PIN_HIGH),
               "error setting clock pin high");
-  local_sleep(950);
+  local_sleep(1);
   check_error(gpio_write_pin(GPIO_SEG_CLOCK, GPIO_PIN_LOW),
               "error setting clock pin low");
 }
@@ -212,7 +239,7 @@ void *blast_blocks_loop(void *arg)
 
     /* Wait until the next opportunity to run. */
 
-    local_sleep(9000000);
+    local_sleep(9000);
 
     /* Time to grab an update. */
 
@@ -262,7 +289,7 @@ int main(int argc, char *argv)
     /* Wait for the semaphore to be ready. */
 
     while (semaphore == 1) {
-      local_sleep(1500);
+      local_sleep(1);
     }
 
     /* Update the block structure with the current writes. */
@@ -286,7 +313,7 @@ int main(int argc, char *argv)
     /* Wait for it to be read back. */
 
     while (semaphore < 2) {
-      local_sleep(1500);
+      local_sleep(1);
     }
 
     /* Undo the previous writes in preparation for the next set. */
@@ -308,16 +335,16 @@ int main(int argc, char *argv)
   /* Reset the display. */
 
   gpio_write_pin(GPIO_SEG_RESET, GPIO_PIN_HIGH);
-  local_sleep(1000);
+  local_sleep(1);
   gpio_write_pin(GPIO_SEG_RESET, GPIO_PIN_LOW);
 
   /* Unregister the GPIO pins and terminate.  Note that we probably
      *should* unregister, but it seems to cause problems with
      *subsequent runs. */
 
-  /* gpio_unexport_pin(GPIO_SEG_DATA);
+  gpio_unexport_pin(GPIO_SEG_DATA);
   gpio_unexport_pin(GPIO_SEG_CLOCK);
-  gpio_unexport_pin(GPIO_SEG_RESET); */
+  gpio_unexport_pin(GPIO_SEG_RESET);
 
   return 0;
 }
