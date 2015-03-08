@@ -74,7 +74,7 @@
 #include <unistd.h>
 #include <pthread.h>
 
-#include "sysfs_gpio.h"
+#include "gpio.h"
 
 /* Global state variables, for thread communication. */
 
@@ -133,20 +133,20 @@ void local_sleep(long nsec)
 void blast_bit(const uint8_t bit)
 {
   int bit_setting =
-    ((bit & 0x01) == 0) ? SYSFS_GPIO_PIN_LOW : SYSFS_GPIO_PIN_HIGH;
+    ((bit & 0x01) == 0) ? GPIO_PIN_LOW : GPIO_PIN_HIGH;
 
   /* Failsafe: make sure the clock pin starts low every time. */
 
-  check_error(sysfs_gpio_write_pin(GPIO_SEG_CLOCK, SYSFS_GPIO_PIN_LOW),
+  check_error(gpio_write_pin(GPIO_SEG_CLOCK, GPIO_PIN_LOW),
               "error setting clock pin low");
 
-  check_error(sysfs_gpio_write_pin(GPIO_SEG_DATA, bit_setting),
+  check_error(gpio_write_pin(GPIO_SEG_DATA, bit_setting),
               "error setting data pin");
   local_sleep(300);
-  check_error(sysfs_gpio_write_pin(GPIO_SEG_CLOCK, SYSFS_GPIO_PIN_HIGH),
+  check_error(gpio_write_pin(GPIO_SEG_CLOCK, GPIO_PIN_HIGH),
               "error setting clock pin high");
   local_sleep(950);
-  check_error(sysfs_gpio_write_pin(GPIO_SEG_CLOCK, SYSFS_GPIO_PIN_LOW),
+  check_error(gpio_write_pin(GPIO_SEG_CLOCK, GPIO_PIN_LOW),
               "error setting clock pin low");
 }
 
@@ -237,12 +237,12 @@ int main(int argc, char *argv)
 
   /* Initialize the GPIO system. */
 
-  sysfs_gpio_export_pin(GPIO_SEG_DATA);
-  sysfs_gpio_set_direction(GPIO_SEG_DATA, SYSFS_GPIO_DIR_OUTPUT);
-  sysfs_gpio_export_pin(GPIO_SEG_CLOCK);
-  sysfs_gpio_set_direction(GPIO_SEG_CLOCK, SYSFS_GPIO_DIR_OUTPUT);
-  sysfs_gpio_export_pin(GPIO_SEG_RESET);
-  sysfs_gpio_set_direction(GPIO_SEG_RESET, SYSFS_GPIO_DIR_OUTPUT);
+  gpio_export_pin(GPIO_SEG_DATA);
+  gpio_set_direction(GPIO_SEG_DATA, GPIO_DIR_OUTPUT);
+  gpio_export_pin(GPIO_SEG_CLOCK);
+  gpio_set_direction(GPIO_SEG_CLOCK, GPIO_DIR_OUTPUT);
+  gpio_export_pin(GPIO_SEG_RESET);
+  gpio_set_direction(GPIO_SEG_RESET, GPIO_DIR_OUTPUT);
 
   /* Start the blaster loop. */
 
@@ -301,17 +301,17 @@ int main(int argc, char *argv)
 
   /* Reset the display. */
 
-  sysfs_gpio_write_pin(GPIO_SEG_RESET, SYSFS_GPIO_PIN_HIGH);
+  gpio_write_pin(GPIO_SEG_RESET, GPIO_PIN_HIGH);
   local_sleep(1000);
-  sysfs_gpio_write_pin(GPIO_SEG_RESET, SYSFS_GPIO_PIN_LOW);
+  gpio_write_pin(GPIO_SEG_RESET, GPIO_PIN_LOW);
 
   /* Unregister the GPIO pins and terminate.  Note that we probably
      *should* unregister, but it seems to cause problems with
      *subsequent runs. */
 
-  /* sysfs_gpio_unexport_pin(GPIO_SEG_DATA);
-  sysfs_gpio_unexport_pin(GPIO_SEG_CLOCK);
-  sysfs_gpio_unexport_pin(GPIO_SEG_RESET); */
+  /* gpio_unexport_pin(GPIO_SEG_DATA);
+  gpio_unexport_pin(GPIO_SEG_CLOCK);
+  gpio_unexport_pin(GPIO_SEG_RESET); */
 
   return 0;
 }

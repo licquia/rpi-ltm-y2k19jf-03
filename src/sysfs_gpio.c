@@ -10,7 +10,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 
-#include "sysfs_gpio.h"
+#include "gpio.h"
 
 /*
  * Routines for controlling GPIO via sysfs.
@@ -18,7 +18,7 @@
  * found at http://elinux.org/RPi_Low-level_peripherals.
  */
 
-int sysfs_gpio_export_pin(int pin)
+int gpio_export_pin(int pin)
 {
   char buffer[3];
   ssize_t bytes;
@@ -36,7 +36,7 @@ int sysfs_gpio_export_pin(int pin)
   return 0;
 }
 
-int sysfs_gpio_unexport_pin(int pin)
+int gpio_unexport_pin(int pin)
 {
   char buffer[3];
   ssize_t bytes;
@@ -54,7 +54,7 @@ int sysfs_gpio_unexport_pin(int pin)
   return 0;
 }
 
-int sysfs_gpio_set_direction(int pin, int direction)
+int gpio_set_direction(int pin, int direction)
 {
   char *direction_str;
   int direction_length;
@@ -68,10 +68,10 @@ int sysfs_gpio_set_direction(int pin, int direction)
     return -1;
   }
 
-  if (direction == SYSFS_GPIO_DIR_INPUT) {
+  if (direction == GPIO_DIR_INPUT) {
     direction_str = "in";
     direction_length = 2;
-  } else if (direction == SYSFS_GPIO_DIR_OUTPUT) {
+  } else if (direction == GPIO_DIR_OUTPUT) {
     direction_str = "out";
     direction_length = 3;
   } else {
@@ -88,7 +88,7 @@ int sysfs_gpio_set_direction(int pin, int direction)
   return 0;
 }
 
-int sysfs_gpio_write_pin(int pin, int setting)
+int gpio_write_pin(int pin, int setting)
 {
   static const char s_values_str[] = "01";
  
@@ -103,9 +103,9 @@ int sysfs_gpio_write_pin(int pin, int setting)
     return -1;
   }
 
-  if (setting == SYSFS_GPIO_PIN_LOW) {
+  if (setting == GPIO_PIN_LOW) {
     values_index = 0;
-  } else if (setting == SYSFS_GPIO_PIN_HIGH) {
+  } else if (setting == GPIO_PIN_HIGH) {
     values_index = 1;
   } else {
     fputs("error: invalid pin setting value\n", stderr);
