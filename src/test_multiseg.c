@@ -199,6 +199,10 @@ void *blast_blocks_loop(void *arg)
 
     blast_block(local_block[current_block_counter]);
 
+    /* Check for whether it's time to end. */
+
+    pthread_testcancel();
+
     /* Set up for the next block to write. */
 
     current_block_counter++;
