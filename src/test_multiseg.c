@@ -240,7 +240,7 @@ void *blast_blocks_loop(void *arg)
 
     /* Wait until the next opportunity to run. */
 
-    local_sleep(9000);
+    local_sleep(700000);
 
     /* Time to grab an update. */
 
@@ -266,6 +266,7 @@ int main(int argc, char *argv)
   uint8_t segment_mask;
   int segment_mask_index, i, j;
   pthread_t blaster_thread;
+  struct sched_param sched_p;
 
   /* Initialize the GPIO system. */
 
@@ -282,6 +283,9 @@ int main(int argc, char *argv)
 
   check_error(pthread_create(&blaster_thread, NULL, blast_blocks_loop, NULL),
               "could not start thread");
+  sched_p.sched_priority = 1;
+  check_error(pthread_setschedparam(blaster_thread, SCHED_FIFO, &sched_p),
+	      "could not set thread priority");
 
   /* Set up the next segments to light.  For now, that's one segment
      per group. */
