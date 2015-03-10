@@ -77,6 +77,39 @@
 
 #include "gpio.h"
 
+/* For the 14-bit alphanumberic setups, create bit patterns for common
+   characters to display. */
+
+const uint16_t alphanum_chars[][2] = {
+  { 'A', 0xEC88 },
+  { 'B', 0xF2A0 },
+  { 'C', 0x9C00 },
+  { 'D', 0xF220 },
+  { 'E', 0x9C88 },
+  { 'F', 0x8C88 },
+  { 'G', 0xBC80 },
+  { 'H', 0x6C88 },
+  { 'I', 0x9220 },
+  { 'J', 0x7800 },
+  { 'K', 0x0D48 },
+  { 'L', 0x1C00 },
+  { 'M', 0x6D04 },
+  { 'N', 0x6C44 },
+  { 'O', 0xFC00 },
+  { 'P', 0xCC88 },
+  { 'Q', 0xFC40 },
+  { 'R', 0xCCC8 },
+  { 'S', 0xB088 },
+  { 'T', 0x8220 },
+  { 'U', 0x7C00 },
+  { 'V', 0x0D10 },
+  { 'W', 0x6C50 },
+  { 'X', 0x0154 },
+  { 'Y', 0x0124 },
+  { 'Z', 0x9110 },
+  { 0, 0 }
+};
+
 /* Global state variables, for thread communication. */
 
 uint8_t semaphore = 2;
@@ -180,7 +213,7 @@ void blast_bit(const uint8_t bit)
 
 /* Write an entire 34-byte block to the display controller. */
 
-void blast_block(const uint8_t block[5])
+void blast_block(const uint8_t render_block[5])
 {
   uint8_t local_block[5];
   int i, j;
@@ -190,7 +223,7 @@ void blast_block(const uint8_t block[5])
      syncing purposes. */
 
   for (i = 0; i < 5; i++) {
-    local_block[i] = block[i];
+    local_block[i] = render_block[i];
   }
   local_block[4] = local_block[4] & 0xc0;
 
@@ -244,9 +277,7 @@ void *blast_blocks_loop(void *arg)
 
     /* Time to grab an update. */
 
-    if (semaphore == 0) {
-      semaphore++;
-
+    if (++semaphore == 1) {
       for (i = 0; i < 5; i++) {
         for (j = 0; j < 5; j++) {
           local_block[i][j] = block[i][j];
@@ -254,11 +285,77 @@ void *blast_blocks_loop(void *arg)
       }
 
       semaphore++;
+    } else if (--semaphore < 0) {
+      semaphore = 0;
     }
   }
 
   /* Warning suppression; we should never get here. */
   return NULL;
+}
+
+/* For a given character, return the bit code to render the character
+   on one of the alphanumberic spaces. */
+
+uint16_t find_alphanum_code(char c)
+{
+  uint16_t code;
+  int i;
+
+  /* Asterisk - the default code, used for 'not found'. */
+
+  code = 0x03FC; 
+
+  /* Find the code for this character. */
+  for (i = 0; alphanum_chars[i][0] != 0; i++) {
+    if (((char)alphanum_chars[i][0]) == c) {
+      code = alphanum_chars[i][1];
+      break;
+    }
+  }
+
+  return code;
+}
+
+/* Zero out the alphanum sections. */
+
+void clear_alphanum()
+{
+  int i;
+
+  for (i = 0; i < 5; i++) {
+    block[i][0] = 0;
+    block[i][1] = block[i][1] & 0x02;
+  }
+  for (i = 3; i < 5; i++) {
+    block[i][1] = 0;
+    block[i][2] = 0;
+    block[i][3] = block[i][3] & 0x0F;
+  }
+}
+
+/* Render the string into the alphanum section of the display. */
+
+void render_alphanum(const char *render)
+{
+  int i, j;
+  uint16_t code;
+
+  clear_alphanum();
+
+  for (i = 0; i < 7 && render[i] != '\0'; i++) {
+    code = find_alphanum_code(render[i]);
+
+    if (i < 5) {
+      block[i][0] = block[i][0] | (uint8_t)((code & 0xFF00) >> 8);
+      block[i][1] = block[i][1] | (uint8_t)(code & 0x00FC);
+    } else {
+      j = i - 2;
+      block[j][1] = block[j][1] | (uint8_t)((code & 0xC000) >> 14);
+      block[j][2] = block[j][2] | (uint8_t)((code & 0x3FC0) >> 6);
+      block[j][3] = block[j][3] | (uint8_t)(code & 0x003F);
+    }
+  }
 }
 
 int main(int argc, char *argv)
@@ -267,6 +364,11 @@ int main(int argc, char *argv)
   int segment_mask_index, i, j;
   pthread_t blaster_thread;
   struct sched_param sched_p;
+  const char *letters[] =
+    { "ABCDEFG",
+      "HIJKLMN",
+      "OPQRSTU",
+      "VWXYZ" };
 
   /* Initialize the GPIO system. */
 
@@ -293,7 +395,7 @@ int main(int argc, char *argv)
   for (j = 0; j < 29; j++) {
     /* Wait for the semaphore to be ready. */
 
-    while (semaphore == 1) {
+    while (semaphore < 2) {
       local_sleep(1);
     }
 
@@ -327,9 +429,26 @@ int main(int argc, char *argv)
       block[i][segment_mask_index] = block[i][segment_mask_index] & (~segment_mask);
     }
 
-    /* Wait 3 seconds. */
+    /* Wait. */
 
-    sleep(3);
+    sleep(1);
+  }
+
+  /* Now cycle through the known alphanumeric glyphs, rendering them
+     on the first alphanumeric position. */
+
+  for (i = 0; i < 4; i++) {
+    while (semaphore < 2) {
+      local_sleep(1);
+    }
+
+    fputs(letters[i], stdout);
+    fputc('\n', stdout);
+    render_alphanum(letters[i]);
+
+    semaphore = 0;
+
+    sleep(5);
   }
 
   /* Stop the update thread. */
