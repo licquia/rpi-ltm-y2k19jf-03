@@ -99,7 +99,7 @@ const uint16_t alphanum_chars[][2] = {
   { 'P', 0xCC88 },
   { 'Q', 0xFC40 },
   { 'R', 0xCCC8 },
-  { 'S', 0xB088 },
+  { 'S', 0xB084 },
   { 'T', 0x8220 },
   { 'U', 0x7C00 },
   { 'V', 0x0D10 },
