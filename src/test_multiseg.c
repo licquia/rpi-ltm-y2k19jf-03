@@ -353,7 +353,7 @@ void render_alphanum(const char *render)
       j = i - 2;
       block[j][1] = block[j][1] | (uint8_t)((code & 0xC000) >> 14);
       block[j][2] = block[j][2] | (uint8_t)((code & 0x3FC0) >> 6);
-      block[j][3] = block[j][3] | (uint8_t)(code & 0x003F);
+      block[j][3] = block[j][3] | (uint8_t)((code & 0x003C) << 2);
     }
   }
 }
