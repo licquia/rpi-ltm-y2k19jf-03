@@ -107,6 +107,16 @@ const uint16_t alphanum_chars[][2] = {
   { 'X', 0x0154 },
   { 'Y', 0x0124 },
   { 'Z', 0x9110 },
+  { '0', 0xFC00 },
+  { '1', 0x6100 },
+  { '2', 0xD888 },
+  { '3', 0xF088 },
+  { '4', 0x6488 },
+  { '5', 0xB488 },
+  { '6', 0xBC88 },
+  { '7', 0xE000 },
+  { '8', 0xFC88 },
+  { '9', 0xF488 },
   { 0, 0 }
 };
 
@@ -358,6 +368,69 @@ void render_alphanum(const char *render)
   }
 }
 
+/* Convert the alphanum rendering of a digit character to numeric
+   encoding, suitable for the numeric display at the bottom. */
+
+uint8_t find_numeric_code(char c)
+{
+  uint8_t middle_seg = 0;
+  uint16_t code = 0x03FC; 
+
+  if ((c >= '0') && (c <= '9')) {
+    code = find_alphanum_code(c);
+  }
+
+  if ((code & 0x0088) != 0) {
+    middle_seg = 2;
+  }
+
+  return ((uint8_t)((code & 0xFC00) >> 8)) | middle_seg;
+}
+
+/* Clear out the numeric sections. */
+
+void clear_numeric()
+{
+  int i;
+
+  for (i = 1; i < 3; i++) {
+    block[i][1] = block[i][1] & 0xFC;
+    block[i][2] = 0;
+    block[i][3] = block[i][3] & 0x0F;
+  }
+}
+
+/* Render the given string into the numeric section of the display. */
+
+void render_numeric(const char *render)
+{
+  uint8_t code;
+  int i, block_index;
+
+  clear_numeric();
+
+  for (i = 0; i < 4 && render[i] != '\0'; i++) {
+    code = find_numeric_code(render[i]);
+
+    if ((i % 2) == 0) {
+      block_index = 1;
+    } else {
+      block_index = 2;
+    }
+
+    printf(" char = %d (%c), index = %d, code = %02X\n",
+           i, render[i], block_index, code);
+
+    if (i < 2) {
+      block[block_index][1] = block[block_index][1] | ((code & 0xC0) >> 6);
+      block[block_index][2] = block[block_index][2] | ((code & 0x3E) << 2);
+    } else {
+      block[block_index][2] = block[block_index][2] | ((code & 0xE0) >> 5);
+      block[block_index][3] = block[block_index][3] | ((code & 0x1E) << 3);
+    }
+  }
+}
+
 int main(int argc, char *argv)
 {
   uint8_t segment_mask;
@@ -368,7 +441,15 @@ int main(int argc, char *argv)
     { "ABCDEFG",
       "HIJKLMN",
       "OPQRSTU",
-      "VWXYZ" };
+      "VWXYZ",
+      "0123456",
+      "789",
+      NULL };
+  const char *numbers[] =
+    { "0123",
+      "456",
+      "7890",
+      NULL };
 
   /* Initialize the GPIO system. */
 
@@ -437,14 +518,25 @@ int main(int argc, char *argv)
   /* Now cycle through the known alphanumeric glyphs, rendering them
      on the first alphanumeric position. */
 
-  for (i = 0; i < 4; i++) {
+  j = 1;
+  for (i = 0; letters[i] != NULL; i++) {
     while (semaphore < 2) {
       local_sleep(1);
     }
 
     fputs(letters[i], stdout);
-    fputc('\n', stdout);
     render_alphanum(letters[i]);
+
+    if (j && numbers[i] != NULL) {
+      fputs(", ", stdout);
+      fputs(numbers[i], stdout);
+      render_numeric(numbers[i]);
+    } else if (numbers[i] == NULL) {
+      j = 0;
+      render_numeric("");
+    };
+
+    fputc('\n', stdout);
 
     semaphore = 0;
 
