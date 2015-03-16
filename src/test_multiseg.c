@@ -4,66 +4,6 @@
  *
  * Copyright 2015 Jeff Licquia.
  *
- * This routine tests writing to a generic multi-segment display which can
- * be found occasionally in old parts bins.  Thanks to Marty Beem for
- * providing me one to play with.
- *
- * The part was reverse-engineered by David Cook.  Write-up here:
- *
- * http://www.robotroom.com/MultiSegmentLEDDisplay.html
- *
- * The basic idea is that the header on the back of this part takes
- * 5V signals like so:
- *
- *       data  X     X  +5VDC
- *      reset  X  X  X  ground
- *              clock
- *
- * Data is written in 36-byte blocks, with the first bit being a start
- * bit (always 1) and the last being a stop bit (which is ignored).
- * Use 0 for this bit and all non-specified bits; this allows for
- * resync if the two ends get out of sync.
- *
- * Writing a bit involves setting the data line low or high for 0 or
- * 1, respectively, waiting at least 300 nanoseconds, setting the
- * clock high, waiting at least 950 nanoseconds, and setting the clock
- * low.  Slower timings are perfectly fine.
- *
- * The bits are accumulated until all 36 have been written, at which
- * point the specified segments on the display light, and all
- * unspecified segments turn off.
- *
- * Note that there are 138 segments to light and only 34 usable bits.
- * This means that we have to cycle between 5 groups of segments.  The
- * last 5 bits before the stop bit indicate the group.  We therefore
- * have to continuously update the display, cycling through all 5
- * groups rapidly, in order for the entire display to be useful.
- * 
- * Here are the 5 groups, taken from the above page:
- *
- * 1) 1 start + 14 alpha + 1 ignore + 2 colon + 8 icon + 2 colon + 2
- *    ignore + 5 transistor + 1 zero = 36
- * 2) 1 start + 14 alpha + 7 numeric + 7 numeric + 1 ignore + 5
- *    transistor + 1 zero = 36
- * 3) 1 start + 14 alpha + 7 numeric + 7 numeric + 1 ignore + 5
- *    transistor + 1 zero = 36
- * 4) 1 start + 14 alpha + 14 alpha + 1 ignore + 5 transistor + 1 zero
- *    = 36
- * 5) 1 start + 14 alpha + 14 alpha + 1 ignore + 5 transistor + 1 zero
- *    = 36
- *
- * Writing an entire group of 5 requires delays totalling about
- * 225,000 nanoseconds, which means the whole update process should
- * take about a quarter of a millisecond.  This should give us plenty
- * of time for extra resync zero bits, and also not tax the processor
- * too heavily.
- *
- * This routine is written assuming the pins are connected to a
- * Raspberry Pi Model B, with the data pin hooked to GPIO 22, the
- * clock pin hooked to GPIO 17, and the reset pin hooked to GPIO 21/27
- * (depending on the version of the board).  I'm using a level shifter
- * from Adafruit to translate the 3.3V signals from the Pi to the 5V
- * signals the display expects (http://www.adafruit.com/products/757).
  */
 
 #include <stdio.h>
@@ -73,52 +13,9 @@
 #include <errno.h>
 #include <unistd.h>
 #include <pthread.h>
-#include <sys/time.h>
 
 #include "gpio.h"
-
-/* For the 14-bit alphanumberic setups, create bit patterns for common
-   characters to display. */
-
-const uint16_t alphanum_chars[][2] = {
-  { 'A', 0xEC88 },
-  { 'B', 0xF2A0 },
-  { 'C', 0x9C00 },
-  { 'D', 0xF220 },
-  { 'E', 0x9C88 },
-  { 'F', 0x8C88 },
-  { 'G', 0xBC80 },
-  { 'H', 0x6C88 },
-  { 'I', 0x9220 },
-  { 'J', 0x7800 },
-  { 'K', 0x0D48 },
-  { 'L', 0x1C00 },
-  { 'M', 0x6D04 },
-  { 'N', 0x6C44 },
-  { 'O', 0xFC00 },
-  { 'P', 0xCC88 },
-  { 'Q', 0xFC40 },
-  { 'R', 0xCCC8 },
-  { 'S', 0xB084 },
-  { 'T', 0x8220 },
-  { 'U', 0x7C00 },
-  { 'V', 0x0D10 },
-  { 'W', 0x6C50 },
-  { 'X', 0x0154 },
-  { 'Y', 0x0124 },
-  { 'Z', 0x9110 },
-  { '0', 0xFC00 },
-  { '1', 0x6100 },
-  { '2', 0xD888 },
-  { '3', 0xF088 },
-  { '4', 0x6488 },
-  { '5', 0xB488 },
-  { '6', 0xBC88 },
-  { '7', 0xE000 },
-  { '8', 0xFC88 },
-  { '9', 0xF488 },
-  { 0, 0 }
-};
+#include "ltmy2k19jf03.h"
 
 /* Global state variables, for thread communication. */
 
@@ -151,105 +48,6 @@ void check_error(const int retval, const char *errmsg)
 #define GPIO_SEG_RESET 27
 #endif
 
-/* Sleep for a specified number of microseconds.  For delays less
-   than about 100 microseconds, just busy-wait; this seems to be best
-   practice on Linux.  For longer times, nanosleep should do the
-   trick.  See:
-
-   https://projects.drogon.net/accurate-delays-on-the-raspberry-pi/
-
-   Short loop busy-wait pulled from wiringPi.
- */
-
-void delayMicrosecondsHard (unsigned int howLong)
-{
-  struct timeval tNow, tLong, tEnd ;
-
-  gettimeofday (&tNow, NULL) ;
-  tLong.tv_sec  = howLong / 1000000 ;
-  tLong.tv_usec = howLong % 1000000 ;
-  timeradd (&tNow, &tLong, &tEnd) ;
-
-  while (timercmp (&tNow, &tEnd, <))
-    gettimeofday (&tNow, NULL) ;
-}
-
-void local_sleep(long usec)
-{
-  struct timespec to_wait;
-  struct timespec remaining;
-  int sleep_retval;
-
-  if (usec < 100) {
-    delayMicrosecondsHard(usec);
-  } else {
-    to_wait.tv_sec = usec / 1000000;
-    remaining.tv_sec = 0;
-    to_wait.tv_nsec = usec % 1000000;
-    remaining.tv_nsec = 0;
-    sleep_retval = -1;
-    errno = EINTR;
-    while ((sleep_retval == -1) && (errno == EINTR)) {
-      sleep_retval = nanosleep(&to_wait, &remaining);
-      to_wait.tv_sec = remaining.tv_sec;
-      to_wait.tv_nsec = remaining.tv_nsec;
-    }
-  }
-}
-
-/* Blast a single bit to the display controller.  The "bit" parameter is
-   0 or 1.  It can be more than 1; we mask off all but the first bit
-   for the sake of convenience. */
-
-void blast_bit(const uint8_t bit)
-{
-  int bit_setting =
-    ((bit & 0x01) == 0) ? GPIO_PIN_LOW : GPIO_PIN_HIGH;
-
-  /* Failsafe: make sure the clock pin starts low every time. */
-
-  check_error(gpio_write_pin(GPIO_SEG_CLOCK, GPIO_PIN_LOW),
-              "error setting clock pin low");
-
-  check_error(gpio_write_pin(GPIO_SEG_DATA, bit_setting),
-              "error setting data pin");
-  local_sleep(1);
-  check_error(gpio_write_pin(GPIO_SEG_CLOCK, GPIO_PIN_HIGH),
-              "error setting clock pin high");
-  local_sleep(1);
-  check_error(gpio_write_pin(GPIO_SEG_CLOCK, GPIO_PIN_LOW),
-              "error setting clock pin low");
-}
-
-/* Write an entire 34-byte block to the display controller. */
-
-void blast_block(const uint8_t render_block[5])
-{
-  uint8_t local_block[5];
-  int i, j;
-
-  /* Mask off bits passed beyond 34.  This way, we can write the
-     entire 40-byte block with the last 6 bits acting as stop bits for
-     syncing purposes. */
-
-  for (i = 0; i < 5; i++) {
-    local_block[i] = render_block[i];
-  }
-  local_block[4] = local_block[4] & 0xc0;
-
-  /* Start bit. */
-
-  blast_bit(1);
-
-  /* Now go through the entire block bit by bit. */
-
-  for (i = 0; i < 5; i++) {
-    for (j = 7; j >= 0; j--) {
-      blast_bit(local_block[i] >> j);
-    }
-  }
-}
-
 /* Main loop for actual writer thread.  This does the block switching
    thing, going through all five blocks so fast that they all appear
    lit.  We use a very simple global semaphore to control updates. */
@@ -268,7 +66,7 @@ void *blast_blocks_loop(void *arg)
   while (1) {
     /* Write the current block info. */
 
-    blast_block(local_block[current_block_counter]);
+    ltm_blast_block(local_block[current_block_counter]);
 
     /* Check for whether it's time to end. */
 
@@ -283,7 +81,7 @@ void *blast_blocks_loop(void *arg)
 
     /* Wait until the next opportunity to run. */
 
-    local_sleep(700000);
+    ltm_sleep(700000);
 
     /* Time to grab an update. */
 
@@ -302,133 +100,6 @@ void *blast_blocks_loop(void *arg)
 
   /* Warning suppression; we should never get here. */
   return NULL;
-}
-
-/* For a given character, return the bit code to render the character
-   on one of the alphanumberic spaces. */
-
-uint16_t find_alphanum_code(char c)
-{
-  uint16_t code;
-  int i;
-
-  /* Asterisk - the default code, used for 'not found'. */
-
-  code = 0x03FC; 
-
-  /* Find the code for this character. */
-  for (i = 0; alphanum_chars[i][0] != 0; i++) {
-    if (((char)alphanum_chars[i][0]) == c) {
-      code = alphanum_chars[i][1];
-      break;
-    }
-  }
-
-  return code;
-}
-
-/* Zero out the alphanum sections. */
-
-void clear_alphanum()
-{
-  int i;
-
-  for (i = 0; i < 5; i++) {
-    block[i][0] = 0;
-    block[i][1] = block[i][1] & 0x02;
-  }
-  for (i = 3; i < 5; i++) {
-    block[i][1] = 0;
-    block[i][2] = 0;
-    block[i][3] = block[i][3] & 0x0F;
-  }
-}
-
-/* Render the string into the alphanum section of the display. */
-
-void render_alphanum(const char *render)
-{
-  int i, j;
-  uint16_t code;
-
-  clear_alphanum();
-
-  for (i = 0; i < 7 && render[i] != '\0'; i++) {
-    code = find_alphanum_code(render[i]);
-
-    if (i < 5) {
-      block[i][0] = block[i][0] | (uint8_t)((code & 0xFF00) >> 8);
-      block[i][1] = block[i][1] | (uint8_t)(code & 0x00FC);
-    } else {
-      j = i - 2;
-      block[j][1] = block[j][1] | (uint8_t)((code & 0xC000) >> 14);
-      block[j][2] = block[j][2] | (uint8_t)((code & 0x3FC0) >> 6);
-      block[j][3] = block[j][3] | (uint8_t)((code & 0x003C) << 2);
-    }
-  }
-}
-
-/* Convert the alphanum rendering of a digit character to numeric
-   encoding, suitable for the numeric display at the bottom. */
-
-uint8_t find_numeric_code(char c)
-{
-  uint8_t middle_seg = 0;
-  uint16_t code = 0x03FC; 
-
-  if ((c >= '0') && (c <= '9')) {
-    code = find_alphanum_code(c);
-  }
-
-  if ((code & 0x0088) != 0) {
-    middle_seg = 2;
-  }
-
-  return ((uint8_t)((code & 0xFC00) >> 8)) | middle_seg;
-}
-
-/* Clear out the numeric sections. */
-
-void clear_numeric()
-{
-  int i;
-
-  for (i = 1; i < 3; i++) {
-    block[i][1] = block[i][1] & 0xFC;
-    block[i][2] = 0;
-    block[i][3] = block[i][3] & 0x0F;
-  }
-}
-
-/* Render the given string into the numeric section of the display. */
-
-void render_numeric(const char *render)
-{
-  uint8_t code;
-  int i, block_index;
-
-  clear_numeric();
-
-  for (i = 0; i < 4 && render[i] != '\0'; i++) {
-    code = find_numeric_code(render[i]);
-
-    if ((i % 2) == 0) {
-      block_index = 1;
-    } else {
-      block_index = 2;
-    }
-
-    printf(" char = %d (%c), index = %d, code = %02X\n",
-           i, render[i], block_index, code);
-
-    if (i < 2) {
-      block[block_index][1] = block[block_index][1] | ((code & 0xC0) >> 6);
-      block[block_index][2] = block[block_index][2] | ((code & 0x3E) << 2);
-    } else {
-      block[block_index][2] = block[block_index][2] | ((code & 0xE0) >> 5);
-      block[block_index][3] = block[block_index][3] | ((code & 0x1E) << 3);
-    }
-  }
 }
 
 int main(int argc, char *argv)
@@ -455,12 +126,8 @@ int main(int argc, char *argv)
 
   check_error(gpio_init(), "couldn't initialize GPIO");
 
-  gpio_export_pin(GPIO_SEG_DATA);
-  gpio_set_direction(GPIO_SEG_DATA, GPIO_DIR_OUTPUT);
-  gpio_export_pin(GPIO_SEG_CLOCK);
-  gpio_set_direction(GPIO_SEG_CLOCK, GPIO_DIR_OUTPUT);
-  gpio_export_pin(GPIO_SEG_RESET);
-  gpio_set_direction(GPIO_SEG_RESET, GPIO_DIR_OUTPUT);
+  check_error(ltm_display_init(GPIO_SEG_DATA, GPIO_SEG_CLOCK, GPIO_SEG_RESET),
+	      "couldn't initialize I/O to device");
 
   /* Start the blaster loop. */
 
@@ -477,7 +144,7 @@ int main(int argc, char *argv)
     /* Wait for the semaphore to be ready. */
 
     while (semaphore < 2) {
-      local_sleep(1);
+      ltm_sleep(1);
     }
 
     /* Update the block structure with the current writes. */
@@ -501,7 +168,7 @@ int main(int argc, char *argv)
     /* Wait for it to be read back. */
 
     while (semaphore < 2) {
-      local_sleep(1);
+      ltm_sleep(1);
     }
 
     /* Undo the previous writes in preparation for the next set. */
@@ -521,19 +188,19 @@ int main(int argc, char *argv)
   j = 1;
   for (i = 0; letters[i] != NULL; i++) {
     while (semaphore < 2) {
-      local_sleep(1);
+      ltm_sleep(1);
     }
 
     fputs(letters[i], stdout);
-    render_alphanum(letters[i]);
+    ltm_render_alphanum(letters[i], block);
 
     if (j && numbers[i] != NULL) {
       fputs(", ", stdout);
       fputs(numbers[i], stdout);
-      render_numeric(numbers[i]);
+      ltm_render_numeric(numbers[i], block);
     } else if (numbers[i] == NULL) {
       j = 0;
-      render_numeric("");
+      ltm_render_numeric("", block);
     };
 
     fputc('\n', stdout);
@@ -548,19 +215,8 @@ int main(int argc, char *argv)
   pthread_cancel(blaster_thread);
   pthread_join(blaster_thread, NULL);
 
-  /* Reset the display. */
+  /* Clean up display I/O and terminate. */
 
-  gpio_write_pin(GPIO_SEG_RESET, GPIO_PIN_HIGH);
-  local_sleep(1);
-  gpio_write_pin(GPIO_SEG_RESET, GPIO_PIN_LOW);
-
-  /* Unregister the GPIO pins and terminate.  Note that we probably
-     *should* unregister, but it seems to cause problems with
-     *subsequent runs. */
-
-  gpio_unexport_pin(GPIO_SEG_DATA);
-  gpio_unexport_pin(GPIO_SEG_CLOCK);
-  gpio_unexport_pin(GPIO_SEG_RESET);
-
+  ltm_display_shutdown();
   return 0;
 }
