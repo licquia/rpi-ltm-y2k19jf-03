@@ -142,13 +142,20 @@ int ltm_display_init(int data_pin, int clock_pin, int reset_pin)
 
 /* Shut down the display. */
 
+/* Clear the display. */
+
+int ltm_clear()
+{
+  gpio_write_pin(ltm_reset_pin, GPIO_PIN_HIGH);
+  ltm_sleep(1);
+  gpio_write_pin(ltm_reset_pin, GPIO_PIN_LOW);
+}
+
 void ltm_display_shutdown()
 {
   /* Reset the display. */
 
-  gpio_write_pin(ltm_reset_pin, GPIO_PIN_HIGH);
-  ltm_sleep(1);
-  gpio_write_pin(ltm_reset_pin, GPIO_PIN_LOW);
+  ltm_clear();
 
   /* Unregister the GPIO pins. */
 

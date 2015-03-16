@@ -15,6 +15,8 @@ void ltm_display_shutdown();
 
 void ltm_sleep(long usec);
 
+int ltm_clear();
+
 void ltm_blast_block(const uint8_t render_block[5]);
 
 uint16_t ltm_find_alphanum_code(char c);
