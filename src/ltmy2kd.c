@@ -43,6 +43,7 @@
 #include <errno.h>
 #include <poll.h>
 #include <string.h>
+#include <sched.h>
 
 #include "ltmy2k19jf03.h"
 
@@ -65,7 +66,7 @@
    blank, because we don't have to really do anything in that case. */
 
 #define POLL_TIMEOUT_BLANK 5000
-#define POLL_TIMEOUT_DATA 500
+#define POLL_TIMEOUT_DATA 2
 
 /* Global state. */
 
@@ -123,12 +124,18 @@ void parse_command(char *command)
 int main(int argc, char *argv)
 {
   int retval;
-  int cmd_fd;
+  int cmd_fd, cmd_write_fd;
   int current_block = 0;
   int current_poll_timeout;
   struct pollfd cmd_poll[1];
   char command_buf[16];
   ssize_t bytes_read;
+  struct sched_param policy_param;
+
+  /* Set process priority. */
+
+  policy_param.sched_priority = 1;
+  sched_setscheduler(0, SCHED_FIFO, &policy_param);
 
   /* Open the command pipe. */
 
@@ -139,6 +146,8 @@ int main(int argc, char *argv)
   }
 
   cmd_fd = open(CMD_PATH, O_RDONLY | O_NONBLOCK);
+
+  cmd_write_fd = open(CMD_PATH, O_WRONLY);
 
   cmd_poll[0].fd = cmd_fd;
   cmd_poll[0].events = POLLIN;
