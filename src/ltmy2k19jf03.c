@@ -214,17 +214,14 @@ void blast_bit(const uint8_t bit)
 
   /* Failsafe: make sure the clock pin starts low every time. */
 
-  check_error(gpio_write_pin(ltm_clock_pin, GPIO_PIN_LOW),
-              "error setting clock pin low");
+  gpio_write_pin(ltm_clock_pin, GPIO_PIN_LOW);
+  gpio_write_pin(ltm_data_pin, bit_setting);
 
-  check_error(gpio_write_pin(ltm_data_pin, bit_setting),
-              "error setting data pin");
   ltm_sleep(1);
-  check_error(gpio_write_pin(ltm_clock_pin, GPIO_PIN_HIGH),
-              "error setting clock pin high");
+  gpio_write_pin(ltm_clock_pin, GPIO_PIN_HIGH);
+
   ltm_sleep(1);
-  check_error(gpio_write_pin(ltm_clock_pin, GPIO_PIN_LOW),
-              "error setting clock pin low");
+  gpio_write_pin(ltm_clock_pin, GPIO_PIN_LOW);
 }
 
 /* Write an entire 34-byte block to the display controller. */
@@ -369,9 +366,6 @@ void ltm_render_numeric(const char *render, uint8_t block[5][5])
     } else {
       block_index = 2;
     }
-
-    printf(" char = %d (%c), index = %d, code = %02X\n",
-           i, render[i], block_index, code);
 
     if (i < 2) {
       block[block_index][1] = block[block_index][1] | ((code & 0xC0) >> 6);
