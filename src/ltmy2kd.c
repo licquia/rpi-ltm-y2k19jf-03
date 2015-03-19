@@ -44,6 +44,7 @@
 #include <poll.h>
 #include <string.h>
 #include <sched.h>
+#include <syslog.h>
 
 #include "ltmy2k19jf03.h"
 
@@ -79,6 +80,11 @@ uint8_t block[5][5] =
     { 0x00, 0x00, 0x00, 0x01, 0x00 },
     { 0x00, 0x00, 0x00, 0x00, 0x80 },
     { 0x00, 0x00, 0x00, 0x00, 0x40 } };
+
+void record_errno_error(const char *errmsg)
+{
+  syslog(LOG_ERR, "%s: %s", errmsg, strerror(errno));
+}
 
 void render()
 {
@@ -123,6 +129,7 @@ void parse_command(char *command)
 
 int main(int argc, char *argv)
 {
+  pid_t pid;
   int retval;
   int cmd_fd, cmd_write_fd;
   int current_block = 0;
@@ -131,6 +138,27 @@ int main(int argc, char *argv)
   char command_buf[16];
   ssize_t bytes_read;
   struct sched_param policy_param;
+
+  /* Daemonize. */
+
+  pid = fork();
+  if (pid < 0) {
+    perror("ltmy2kd: could not fork");
+    exit(1);
+  } else if (pid > 0) {
+    exit(0);
+  }
+
+  umask(0);
+  setsid();
+  chdir("/");
+  close(0);
+  close(1);
+  close(2);
+
+  /* Set up logging. */
+
+  openlog("ltmy2kd", 0, LOG_DAEMON);
 
   /* Set process priority. */
 
@@ -141,7 +169,7 @@ int main(int argc, char *argv)
 
   retval = mkfifo(CMD_PATH, 0640);
   if ((retval != 0) && (errno != EEXIST)) {
-    perror("ltmy2kd: could not initialize command pipe");
+    record_errno_error("could not initialize command pipe");
     exit(1);
   }
 
@@ -156,13 +184,13 @@ int main(int argc, char *argv)
 
   retval = gpio_init();
   if (retval != 0) {
-    fputs("ltmy2kd: error initializing GPIO\n", stderr);
+    syslog(LOG_ERR, "error initializing GPIO");
     exit(1);
   }
 
   retval = ltm_display_init(GPIO_SEG_DATA, GPIO_SEG_CLOCK, GPIO_SEG_RESET);
   if (retval != 0) {
-    fputs("ltmy2kd: error initializing display\n", stderr);
+    syslog(LOG_ERR, "error initializing display");
     exit(1);
   }
 
@@ -197,7 +225,7 @@ int main(int argc, char *argv)
     /* Something weird happened during the poll. */
 
     if (retval < 0) {
-      perror("ltmy2kd: error watching for command");
+      record_errno_error("error watching for command");
       exit(1);
     }
 
