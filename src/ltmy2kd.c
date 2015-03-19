@@ -201,18 +201,22 @@ int main(int argc, char *argv)
 
   while (1) {
 
-    /* Blast the current block to the display, but only if we have
-       something to display.   If we're active, set up for the next
-       block to display. */
+    /* Blast the current block to the display. */
+
+    ltm_blast_block(block[current_block]);
+
+    /* Set up the next block to blast. */
+
+    current_block++;
+    if (current_block >= 5) {
+      current_block = 0;
+    }
+
+    /* Set the delay until the next refresh.  As a special case, wait
+       a really long time if our current strings are blank, so we take
+       very little CPU when we don't need to do anything. */
 
     if ((alphanum_string[0] != '\0') || (numeric_string[0] != '\0')) {
-      ltm_blast_block(block[current_block]);
-
-      current_block++;
-      if (current_block >= 5) {
-	current_block = 0;
-      }
-
       current_poll_timeout = POLL_TIMEOUT_DATA;
     } else {
       current_poll_timeout = POLL_TIMEOUT_BLANK;
