@@ -28,5 +28,5 @@ AC_TYPE_UINT8_T
 AC_FUNC_FORK
 AC_CHECK_FUNCS([gettimeofday mkfifo strerror strtol])
 
-AC_CONFIG_FILES([Makefile])
+AC_CONFIG_FILES([Makefile etc/ltmy2kd.init])
 AC_OUTPUT

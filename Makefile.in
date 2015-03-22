@@ -28,8 +28,13 @@ test_multiseg: src/test_multiseg.o $(LIB_OBJFILES)
 
 clean:
 	rm -rf autom4te.cache
-	rm -f Makefile config.h configure config.log config.status
-	rm -f src/*.o test_multiseg ltmy2kd
+	rm -f Makefile config.h config.log config.status
+	rm -f src/*.o test_multiseg ltmy2kd etc/ltmy2kd.init
 
 install: ltmy2kd
 	@INSTALL_PROGRAM@ ltmy2kd $(sbindir)
+	@INSTALL_SCRIPT@ etc/ltmy2kd.init /etc/init.d/ltmy2kd
+
+uninstall:
+	[ -x /etc/init.d/ltmy2kd ] && /etc/init.d/ltmy2kd stop
+	rm -f $(sbindir)/ltmy2kd /etc/init.d/ltmy2kd
