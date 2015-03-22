@@ -45,6 +45,7 @@
 #include <string.h>
 #include <sched.h>
 #include <syslog.h>
+#include <signal.h>
 
 #include "ltmy2k19jf03.h"
 
@@ -62,6 +63,10 @@
 /* Named pipe to use for receiving commands. */
 
 #define CMD_PATH "/run/ltmy2kd"
+
+/* PID file, to prevent running more than once. */
+
+#define PID_FILE "/run/ltmy2kd.pid"
 
 /* Timeouts for polling.  We set a long timeout when the display is
    blank, because we don't have to really do anything in that case. */
@@ -81,21 +86,21 @@ uint8_t block[5][5] =
     { 0x00, 0x00, 0x00, 0x00, 0x80 },
     { 0x00, 0x00, 0x00, 0x00, 0x40 } };
 
+/* Error reporting after daemonizing. */
+
 void record_errno_error(const char *errmsg)
 {
   syslog(LOG_ERR, "%s: %s", errmsg, strerror(errno));
 }
 
-void render()
-{
-  ltm_render_alphanum(alphanum_string, block);
-  ltm_render_numeric(numeric_string, block);
-}
+/* Parse a command string and render its result. */
 
 void parse_command(char *command)
 {
   char *token;
   int found_cmd = 0;
+
+  /* Figure out which command was given. */
 
   token = strtok(command, " \n");
   if (token == NULL) {
@@ -107,6 +112,8 @@ void parse_command(char *command)
   } else if (strcmp(token, "NUM") == 0) {
     found_cmd = 2;
   }
+
+  /* Read the rest of the line as the string to output. */
 
   token = strtok(NULL, "\n");
 
@@ -124,18 +131,22 @@ void parse_command(char *command)
     }
   }
 
-  render();
+  /* Render the current results. */
+
+  ltm_render_alphanum(alphanum_string, block);
+  ltm_render_numeric(numeric_string, block);
 }
 
 int main(int argc, char *argv)
 {
   pid_t pid;
   int retval;
-  int cmd_fd, cmd_write_fd;
+  int pid_file_fd, cmd_fd, cmd_write_fd;
   int current_block = 0;
   int current_poll_timeout;
   struct pollfd cmd_poll[1];
   char command_buf[16];
+  char pid_buf[8];
   ssize_t bytes_read;
   struct sched_param policy_param;
 
@@ -155,6 +166,41 @@ int main(int argc, char *argv)
   close(0);
   close(1);
   close(2);
+
+  syslog(LOG_INFO, "starting, PID %d", getpid());
+
+  /* Check for PID file, and write it. */
+
+  pid_file_fd = open(PID_FILE, O_WRONLY | O_CREAT | O_EXCL);
+  while (pid_file_fd < 0) {
+    if (errno == EEXIST) {
+      pid_file_fd = open(PID_FILE, O_RDONLY);
+      if (pid_file_fd >= 0) {
+        bytes_read = read(pid_file_fd, pid_buf, 7);
+        if (bytes_read > 0) {
+          pid_buf[bytes_read] = '\0';
+          pid = strtol(pid_buf, NULL, 10);
+          close(pid_file_fd);
+          if (kill(pid, 0) == 0) {
+            syslog(LOG_ERR, "another process found (%d)", pid);
+            exit(1);
+          }
+          unlink(PID_FILE);
+          pid_file_fd = open(PID_FILE, O_WRONLY | O_CREAT | O_EXCL);
+        }
+      } else {
+        record_errno_error("error reading existing pid file");
+        exit(1);
+      }
+    } else {
+      record_errno_error("error writing pid file");
+      exit(1);
+    }
+  }
+
+  sprintf(pid_buf, "%d\n", getpid());
+  write(pid_file_fd, pid_buf, strlen(pid_buf));
+  close(pid_file_fd);
 
   /* Set up logging. */
 
