@@ -83,6 +83,7 @@ int ltm_reset_pin = 0;
    characters to display. */
 
 const uint16_t alphanum_chars[][2] = {
+  { ' ', 0x0000 },
   { 'A', 0xEC88 },
   { 'B', 0xF2A0 },
   { 'C', 0x9C00 },
