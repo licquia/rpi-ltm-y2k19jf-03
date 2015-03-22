@@ -8,12 +8,12 @@ AC_CONFIG_HEADERS([config.h])
 
 # Checks for programs.
 AC_PROG_CC
+AC_PROG_INSTALL
 
 # Checks for libraries.
-# FIXME: Replace `main' with a function in `-lpthread':
-AC_CHECK_LIB([pthread], [pthread_create])
-# FIXME: Replace `main' with a function in `-lwiringPi':
+AC_CHECK_LIB([pthread], [pthread_create], [AC_SUBST(PTHREAD_LIB, -lpthread)])
 AC_CHECK_LIB([wiringPi], [wiringPiSetupGpio])
+AC_SUBST(HAVE_LIBWIRINGPI, $ac_cv_lib_wiringPi_wiringPiSetupGpio)
 
 # Checks for header files.
 AC_CHECK_HEADERS([fcntl.h stdint.h stdlib.h string.h sys/time.h syslog.h unistd.h])

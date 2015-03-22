@@ -1,3 +1,8 @@
 *~
 test_multiseg
 ltmy2kd
+autom4te.cache/
+Makefile
+config.h
+config.log
+config.status

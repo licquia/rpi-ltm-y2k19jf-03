@@ -1,22 +1,35 @@
 #!/usr/bin/make
 
-#GPIO_IMPLEMENTATION = src/sysfs_gpio.o
+HAVE_LIBWIRINGPI = @HAVE_LIBWIRINGPI@
+ifeq ($(HAVE_LIBWIRINGPI),yes)
 GPIO_IMPLEMENTATION = src/wiringpi_gpio.o
-
-EXTRA_LIBS = -lwiringPi
+else
+GPIO_IMPLEMENTATION = src/sysfs_gpio.o
+endif
 
 LIB_OBJFILES = src/ltmy2k19jf03.o $(GPIO_IMPLEMENTATION)
 
-CFLAGS = -g -Iinclude
-LDLIBS = $(EXTRA_LIBS)
+prefix = @prefix@
+exec_prefix = @exec_prefix@
+sbindir = @sbindir@
 
-default: ltmy2kd test_multiseg
+CPPFLAGS = @CPPFLAGS@ -Iinclude
+LIBS = @LIBS@
+PTHREAD_LIB = @PTHREAD_LIB@
+INSTALL = @INSTALL@
+
+default: ltmy2kd
 
 ltmy2kd: src/ltmy2kd.o $(LIB_OBJFILES)
-	$(CC) -o $@ $^ $(LDLIBS)
+	$(CC) -o $@ $^ $(LIBS)
 
 test_multiseg: src/test_multiseg.o $(LIB_OBJFILES)
-	$(CC) -o $@ $^ $(LDLIBS) -lpthread
+	$(CC) -o $@ $^ $(LIBS) $(PTHREAD_LIB)
 
 clean:
+	rm -rf autom4te.cache
+	rm -f Makefile config.h configure config.log config.status
 	rm -f src/*.o test_multiseg ltmy2kd
+
+install: ltmy2kd
+	@INSTALL_PROGRAM@ ltmy2kd $(sbindir)
