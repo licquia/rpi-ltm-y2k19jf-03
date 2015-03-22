@@ -120,4 +120,3 @@ interface to update the display instead of wiringPi, because the
 overhead of writing to sysfs is so high.
 
 Jeff Licquia
-jeff@licquia.org
